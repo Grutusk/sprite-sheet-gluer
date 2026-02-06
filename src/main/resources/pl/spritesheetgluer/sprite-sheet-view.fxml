@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox spacing="14.0" alignment="TOP_LEFT" xmlns:fx="http://javafx.com/fxml"
+      fx:controller="pl.spritesheetgluer.ui.SpriteSheetController">
+  <padding>
+    <Insets bottom="18.0" left="18.0" right="18.0" top="18.0"/>
+  </padding>
+
+  <Label text="Sprite Sheet Gluer" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+
+  <VBox spacing="10.0">
+    <HBox spacing="8.0" alignment="CENTER_LEFT">
+      <Label text="Root folder:"/>
+      <TextField fx:id="rootField" editable="false" HBox.hgrow="ALWAYS"/>
+      <Button text="Browse..." onAction="#onBrowse"/>
+    </HBox>
+    <HBox spacing="8.0" alignment="CENTER_LEFT">
+      <Label text="Cell size:"/>
+      <Label text="Must be uniform (no scaling)"/>
+    </HBox>
+    <HBox spacing="8.0" alignment="CENTER_LEFT">
+      <Button fx:id="generateButton" text="Generate sprite sheets" onAction="#onGenerate"/>
+    </HBox>
+  </VBox>
+
+  <Label text="Log"/>
+  <TextArea fx:id="logArea" prefRowCount="10" wrapText="true" editable="false"/>
+</VBox>

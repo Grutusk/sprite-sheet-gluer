@@ -21,8 +21,8 @@ For each character:
 
 ## Cell size and layout
 
-- All frames must share the same width and height. If any frame differs, the
-  tool stops with an error.
+- Frames are expected to share the same width and height. If they do not, the
+  tool uses the most common frame size and skips the others (with a warning).
 - Frames are drawn without scaling into the top-left corner of each cell.
 - Row order is the scan order of animation/direction folders. Column order is
   the file name order within each folder.

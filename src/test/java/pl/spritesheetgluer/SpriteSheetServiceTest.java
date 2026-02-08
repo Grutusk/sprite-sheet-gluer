@@ -27,7 +27,9 @@ class SpriteSheetServiceTest {
     CharacterDefinition character = scanner.scan(root).get(0);
 
     SpriteSheetComposer composer = new SpriteSheetComposer();
-    SpriteSheetRender render = composer.compose(character);
+    SpriteSheetComposition composition = composer.compose(character);
+    SpriteSheetRender render = composition.render();
+    assertTrue(composition.excludedFrames().isEmpty());
 
     int expectedRows = character.animations().stream()
         .mapToInt(animation -> animation.directions().size())
@@ -76,6 +78,7 @@ class SpriteSheetServiceTest {
     assertTrue(result.cellHeight() > 0);
     assertTrue(Files.exists(result.outputPath()));
     assertTrue(Files.exists(result.mappingPath()));
+    assertTrue(result.excludedFrames().isEmpty());
 
     List<String> lines = Files.readAllLines(result.mappingPath());
     assertFalse(lines.isEmpty());
@@ -103,10 +106,34 @@ class SpriteSheetServiceTest {
     assertEquals(expectedMappingPath, result.mappingPath());
     assertTrue(Files.exists(result.outputPath()));
     assertTrue(Files.exists(result.mappingPath()));
+    assertTrue(result.excludedFrames().isEmpty());
 
     List<String> lines = Files.readAllLines(result.mappingPath());
     assertEquals("grid: " + result.rows() + "x" + result.columns(), lines.get(0));
     assertTrue(lines.get(1).startsWith(root.getFileName().toString() + " -> "));
+  }
+
+  @Test
+  void skipsMismatchedFrameSizes() throws Exception {
+    Path root = Files.createDirectory(tempDir.resolve("mixed"));
+    Path animation = Files.createDirectory(root.resolve("walk"));
+    Path keepA = animation.resolve("a.png");
+    Path keepB = animation.resolve("b.png");
+    Path dropC = animation.resolve("c.png");
+    writePng(keepA, 8, 8, new Color(0, 128, 0, 255));
+    writePng(keepB, 8, 8, new Color(0, 255, 255, 255));
+    writePng(dropC, 12, 12, new Color(255, 0, 255, 255));
+
+    SpriteSheetService service = new SpriteSheetService();
+    List<SpriteSheetResult> results = service.generate(root);
+
+    assertEquals(1, results.size());
+    SpriteSheetResult result = results.get(0);
+    assertEquals(1, result.rows());
+    assertEquals(2, result.columns());
+    assertEquals(2, result.frameCount());
+    assertEquals(1, result.excludedFrames().size());
+    assertEquals(dropC, result.excludedFrames().get(0));
   }
 
   private static void writePng(Path path, int width, int height, Color color) throws IOException {

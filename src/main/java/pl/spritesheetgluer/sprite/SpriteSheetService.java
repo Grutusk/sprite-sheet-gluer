@@ -47,12 +47,16 @@ public class SpriteSheetService {
 
     List<SpriteSheetResult> results = new ArrayList<>();
     for (CharacterDefinition character : characters) {
-      SpriteSheetRender render = composer.compose(character);
+      SpriteSheetComposition composition = composer.compose(character);
+      SpriteSheetRender render = composition.render();
       String outputFileName = character.name() + ".png";
       Path outputPath = character.root().resolve(outputFileName);
       writer.write(render.image(), outputPath);
       Path mappingPath = character.root().resolve(character.name() + ".frames.txt");
-      metadataWriter.write(mappingPath, buildMapping(character, render.rows(), render.columns()));
+      metadataWriter.write(
+          mappingPath,
+          buildMapping(character, composition.directions(), render.rows(), render.columns())
+      );
       results.add(new SpriteSheetResult(
           character.name(),
           outputPath,
@@ -61,7 +65,8 @@ public class SpriteSheetService {
           render.rows(),
           render.frameCount(),
           render.cellWidth(),
-          render.cellHeight()
+          render.cellHeight(),
+          composition.excludedFrames()
       ));
     }
     return results;
@@ -72,10 +77,12 @@ public class SpriteSheetService {
    * animation names to the generated sprite sheet grid. The first line stores
    * the grid size as rows x columns.
    */
-  private List<String> buildMapping(CharacterDefinition character, int rows, int columns) {
-    List<DirectionDefinition> directions = character.animations().stream()
-        .flatMap(animation -> animation.directions().stream())
-        .toList();
+  private List<String> buildMapping(
+      CharacterDefinition character,
+      List<DirectionDefinition> directions,
+      int rows,
+      int columns
+  ) {
     List<String> lines = new ArrayList<>();
     lines.add("grid: " + rows + "x" + columns);
     for (int row = 0; row < directions.size(); row++) {

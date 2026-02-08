@@ -10,16 +10,18 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import javax.imageio.ImageIO;
 
 public class SpriteSheetComposer {
   /**
    * Composes a sprite sheet without scaling; each frame is placed in a fixed-size cell.
-   * All frames must share the same width and height or an error is thrown.
+   * Frames that do not match the most common size are skipped.
    * Rows follow the scan order of directions, and columns follow file name order.
    */
-  public SpriteSheetRender compose(CharacterDefinition character) throws IOException {
+  public SpriteSheetComposition compose(CharacterDefinition character) throws IOException {
     List<DirectionDefinition> directions = character.animations().stream()
         .flatMap(animation -> animation.directions().stream())
         .toList();
@@ -28,31 +30,57 @@ public class SpriteSheetComposer {
       throw new IllegalStateException("No directions found for: " + character.name());
     }
 
-    int rows = directions.size();
-    int maxFrames = 0;
-    int cellWidth = 0;
-    int cellHeight = 0;
-    List<List<BufferedImage>> directionFrames = new ArrayList<>();
+    Map<SizeKey, Integer> sizeCounts = new LinkedHashMap<>();
+    Map<DirectionDefinition, List<FrameCandidate>> candidatesByDirection = new LinkedHashMap<>();
     for (DirectionDefinition direction : directions) {
-      List<BufferedImage> frames = new ArrayList<>();
+      List<FrameCandidate> candidates = new ArrayList<>();
       for (Path path : direction.frames()) {
         BufferedImage frame = readImage(path);
-        frames.add(frame);
-        if (cellWidth == 0 && cellHeight == 0) {
-          cellWidth = frame.getWidth();
-          cellHeight = frame.getHeight();
-        } else if (frame.getWidth() != cellWidth || frame.getHeight() != cellHeight) {
-          throw new IllegalStateException(
-              "Frame size mismatch. Expected " + cellWidth + "x" + cellHeight
-                  + " but found " + frame.getWidth() + "x" + frame.getHeight()
-                  + " for " + path
-          );
-        }
+        SizeKey size = new SizeKey(frame.getWidth(), frame.getHeight());
+        sizeCounts.merge(size, 1, Integer::sum);
+        candidates.add(new FrameCandidate(path, frame, size));
       }
-      directionFrames.add(frames);
-      maxFrames = Math.max(maxFrames, frames.size());
+      candidatesByDirection.put(direction, candidates);
     }
 
+    SizeKey targetSize = selectTargetSize(sizeCounts);
+    if (targetSize == null) {
+      throw new IllegalStateException("No frames found for: " + character.name());
+    }
+
+    int maxFrames = 0;
+    int cellWidth = targetSize.width();
+    int cellHeight = targetSize.height();
+    List<List<BufferedImage>> directionFrames = new ArrayList<>();
+    List<DirectionDefinition> filteredDirections = new ArrayList<>();
+    List<Path> excludedFrames = new ArrayList<>();
+    for (Map.Entry<DirectionDefinition, List<FrameCandidate>> entry : candidatesByDirection.entrySet()) {
+      List<BufferedImage> frames = new ArrayList<>();
+      List<Path> includedPaths = new ArrayList<>();
+      for (FrameCandidate candidate : entry.getValue()) {
+        if (candidate.size().equals(targetSize)) {
+          frames.add(candidate.image());
+          includedPaths.add(candidate.path());
+        } else {
+          excludedFrames.add(candidate.path());
+        }
+      }
+      if (!frames.isEmpty()) {
+        DirectionDefinition direction = entry.getKey();
+        filteredDirections.add(new DirectionDefinition(direction.name(), direction.root(), includedPaths));
+        directionFrames.add(frames);
+        maxFrames = Math.max(maxFrames, frames.size());
+      }
+    }
+
+    if (filteredDirections.isEmpty()) {
+      throw new IllegalStateException(
+          "No frames matching " + targetSize.width() + "x" + targetSize.height()
+              + " for: " + character.name()
+      );
+    }
+
+    int rows = filteredDirections.size();
     int columns = maxFrames;
     int width = columns * cellWidth;
     int height = rows * cellHeight;
@@ -80,7 +108,8 @@ public class SpriteSheetComposer {
         row++;
       }
 
-      return new SpriteSheetRender(sheet, columns, rows, frameCount, cellWidth, cellHeight);
+      SpriteSheetRender render = new SpriteSheetRender(sheet, columns, rows, frameCount, cellWidth, cellHeight);
+      return new SpriteSheetComposition(render, filteredDirections, excludedFrames);
     } finally {
       graphics.dispose();
     }
@@ -94,4 +123,22 @@ public class SpriteSheetComposer {
     return image;
   }
 
+  private SizeKey selectTargetSize(Map<SizeKey, Integer> sizeCounts) {
+    SizeKey target = null;
+    int maxCount = 0;
+    for (Map.Entry<SizeKey, Integer> entry : sizeCounts.entrySet()) {
+      int count = entry.getValue();
+      if (count > maxCount) {
+        maxCount = count;
+        target = entry.getKey();
+      }
+    }
+    return target;
+  }
+
+  private record SizeKey(int width, int height) {
+  }
+
+  private record FrameCandidate(Path path, BufferedImage image, SizeKey size) {
+  }
 }

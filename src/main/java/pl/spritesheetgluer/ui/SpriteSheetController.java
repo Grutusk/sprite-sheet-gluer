@@ -16,6 +16,7 @@ import pl.spritesheetgluer.sprite.SpriteSheetService;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 public class SpriteSheetController {
@@ -80,6 +81,8 @@ public class SpriteSheetController {
       busy.set(false);
       List<SpriteSheetResult> results = task.getValue();
       appendLog("Done. Generated " + results.size() + " sprite sheet(s).");
+      List<String> skippedLines = new ArrayList<>();
+      int skippedCount = 0;
       for (SpriteSheetResult result : results) {
         appendLog(
             "Saved " + result.characterName()
@@ -88,6 +91,25 @@ public class SpriteSheetController {
                 + ", frames: " + result.frameCount() + ") -> " + result.outputPath()
                 + " (map: " + result.mappingPath() + ")"
         );
+        List<Path> excludedFrames = result.excludedFrames();
+        if (!excludedFrames.isEmpty()) {
+          Path base = result.outputPath().getParent();
+          for (Path frame : excludedFrames) {
+            String name = base == null ? frame.toString() : base.relativize(frame).toString();
+            skippedLines.add(result.characterName() + ": " + name);
+          }
+          skippedCount += excludedFrames.size();
+        }
+      }
+      if (!skippedLines.isEmpty()) {
+        appendLog("Warning: skipped " + skippedCount + " image(s) due to size mismatch.");
+        StringBuilder message = new StringBuilder(
+            "These images were not included because their sizes did not match:"
+        );
+        for (String line : skippedLines) {
+          message.append(System.lineSeparator()).append(line);
+        }
+        showWarning(message.toString());
       }
     });
 
@@ -117,6 +139,14 @@ public class SpriteSheetController {
     alert.setTitle("Sprite sheet generation failed");
     alert.setHeaderText(null);
     alert.setContentText(message == null ? "Unknown error." : message);
+    alert.showAndWait();
+  }
+
+  private void showWarning(String message) {
+    Alert alert = new Alert(Alert.AlertType.WARNING);
+    alert.setTitle("Sprite sheet generation warning");
+    alert.setHeaderText(null);
+    alert.setContentText(message == null ? "Warning." : message);
     alert.showAndWait();
   }
 }

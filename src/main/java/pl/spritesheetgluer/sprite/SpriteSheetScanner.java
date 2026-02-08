@@ -23,12 +23,22 @@ public class SpriteSheetScanner {
       throw new IllegalArgumentException("Root path must be a directory: " + root);
     }
 
+    List<Path> rootDirectories = listSortedDirectories(root);
+    if (rootDirectories.isEmpty()) {
+      List<Path> rootFrames = listSortedFiles(root).stream()
+          .filter(this::isImageFile)
+          .toList();
+      if (!rootFrames.isEmpty()) {
+        return List.of(scanFlatRoot(root, rootFrames));
+      }
+    }
+
     if (isCharacterRoot(root)) {
       return List.of(scanCharacter(root));
     }
 
     List<CharacterDefinition> characters = new ArrayList<>();
-    for (Path candidate : listSortedDirectories(root)) {
+    for (Path candidate : rootDirectories) {
       if (isCharacterRoot(candidate)) {
         characters.add(scanCharacter(candidate));
       }
@@ -58,6 +68,13 @@ public class SpriteSheetScanner {
     }
 
     return new CharacterDefinition(root.getFileName().toString(), root, animations);
+  }
+
+  private CharacterDefinition scanFlatRoot(Path root, List<Path> frames) {
+    String name = root.getFileName().toString();
+    DirectionDefinition direction = new DirectionDefinition(name, root, frames);
+    AnimationDefinition animation = new AnimationDefinition(name, root, List.of(direction));
+    return new CharacterDefinition(name, root, List.of(animation));
   }
 
   private void processFrames(Path animationDir, List<DirectionDefinition> directions) throws IOException {

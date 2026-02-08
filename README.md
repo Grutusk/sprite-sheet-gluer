@@ -9,6 +9,8 @@ Small JavaFX tool that builds sprite sheets from a character folder layout.
   - Contain image files directly, or
   - Contain direction subfolders with image files inside them.
 - Image files are sorted by file name within a folder.
+- If the selected root folder has no subfolders but contains images, those images
+  are treated as a single animation and glued into one sprite sheet.
 
 ## Output files
 

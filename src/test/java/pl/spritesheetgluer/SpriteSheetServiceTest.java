@@ -6,7 +6,10 @@ import pl.spritesheetgluer.definition.CharacterDefinition;
 import pl.spritesheetgluer.sprite.*;
 
 import javax.imageio.ImageIO;
+import java.awt.Color;
+import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -77,6 +80,45 @@ class SpriteSheetServiceTest {
     List<String> lines = Files.readAllLines(result.mappingPath());
     assertFalse(lines.isEmpty());
     assertEquals("grid: " + result.rows() + "x" + result.columns(), lines.get(0));
+  }
+
+  @Test
+  void writesSpriteSheetForFlatRoot() throws Exception {
+    Path root = Files.createDirectory(tempDir.resolve("flat"));
+    Path first = root.resolve("2.png");
+    Path second = root.resolve("1.png");
+    writePng(first, 6, 6, new Color(0, 0, 255, 255));
+    writePng(second, 6, 6, new Color(255, 255, 0, 255));
+
+    SpriteSheetService service = new SpriteSheetService();
+    List<SpriteSheetResult> results = service.generate(root);
+
+    assertEquals(1, results.size());
+    SpriteSheetResult result = results.get(0);
+    assertEquals(1, result.rows());
+    assertEquals(2, result.columns());
+    Path expectedPath = root.resolve(root.getFileName().toString() + ".png");
+    Path expectedMappingPath = root.resolve(root.getFileName() + ".frames.txt");
+    assertEquals(expectedPath, result.outputPath());
+    assertEquals(expectedMappingPath, result.mappingPath());
+    assertTrue(Files.exists(result.outputPath()));
+    assertTrue(Files.exists(result.mappingPath()));
+
+    List<String> lines = Files.readAllLines(result.mappingPath());
+    assertEquals("grid: " + result.rows() + "x" + result.columns(), lines.get(0));
+    assertTrue(lines.get(1).startsWith(root.getFileName().toString() + " -> "));
+  }
+
+  private static void writePng(Path path, int width, int height, Color color) throws IOException {
+    BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+    Graphics2D graphics = image.createGraphics();
+    try {
+      graphics.setColor(color);
+      graphics.fillRect(0, 0, width, height);
+    } finally {
+      graphics.dispose();
+    }
+    ImageIO.write(image, "png", path.toFile());
   }
 
 }

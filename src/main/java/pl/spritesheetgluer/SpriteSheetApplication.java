@@ -12,7 +12,7 @@ public class SpriteSheetApplication extends Application {
   public void start(Stage stage) throws IOException {
     FXMLLoader fxmlLoader =
         new FXMLLoader(SpriteSheetApplication.class.getResource("sprite-sheet-view.fxml"));
-    Scene scene = new Scene(fxmlLoader.load(), 720, 420);
+    Scene scene = new Scene(fxmlLoader.load(), 840, 560);
     stage.setTitle("Sprite Sheet Gluer");
     stage.setScene(scene);
     stage.show();

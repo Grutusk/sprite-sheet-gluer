@@ -13,20 +13,29 @@ import javafx.scene.control.TextField;
 import javafx.stage.DirectoryChooser;
 import pl.spritesheetgluer.sprite.ExistingSpriteSheetResult;
 import pl.spritesheetgluer.sprite.ExistingSpriteSheetService;
+import pl.spritesheetgluer.sprite.LooseFrameSpriteSheetBatchResult;
+import pl.spritesheetgluer.sprite.LooseFrameSpriteSheetResult;
+import pl.spritesheetgluer.sprite.LooseFrameSpriteSheetService;
 import pl.spritesheetgluer.sprite.SpriteSheetResult;
 import pl.spritesheetgluer.sprite.SpriteSheetService;
 
 import java.io.File;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 public class SpriteSheetController {
   private final ObjectProperty<Path> rootPath = new SimpleObjectProperty<>();
+  private final ObjectProperty<Path> looseRootPath = new SimpleObjectProperty<>();
   private final ObjectProperty<Path> mergeRootPath = new SimpleObjectProperty<>();
   private final BooleanProperty busy = new SimpleBooleanProperty(false);
+  private final BooleanProperty looseBusy = new SimpleBooleanProperty(false);
   private final BooleanProperty mergeBusy = new SimpleBooleanProperty(false);
   private final SpriteSheetService spriteSheetService = new SpriteSheetService();
+  private final LooseFrameSpriteSheetService looseFrameSpriteSheetService = new LooseFrameSpriteSheetService();
   private final ExistingSpriteSheetService existingSpriteSheetService = new ExistingSpriteSheetService();
   @FXML
   private TextField rootField;
@@ -34,6 +43,16 @@ public class SpriteSheetController {
   private TextArea logArea;
   @FXML
   private Button generateButton;
+  @FXML
+  private TextField looseRootField;
+  @FXML
+  private TextArea looseLogArea;
+  @FXML
+  private Button looseGenerateButton;
+  @FXML
+  private TextField looseCellWidthField;
+  @FXML
+  private TextField looseCellHeightField;
   @FXML
   private TextField mergeRootField;
   @FXML
@@ -48,10 +67,14 @@ public class SpriteSheetController {
   @FXML
   private void initialize() {
     bindPathField(rootPath, rootField);
+    bindPathField(looseRootPath, looseRootField);
     bindPathField(mergeRootPath, mergeRootField);
 
     generateButton.disableProperty().bind(
         rootPath.isNull().or(busy)
+    );
+    looseGenerateButton.disableProperty().bind(
+        looseRootPath.isNull().or(looseBusy)
     );
     mergeButton.disableProperty().bind(
         mergeRootPath.isNull().or(mergeBusy)
@@ -66,6 +89,11 @@ public class SpriteSheetController {
   @FXML
   private void onBrowseMergeRoot() {
     chooseDirectory(mergeRootPath, mergeRootField, "Select Sprite Sheet Folder");
+  }
+
+  @FXML
+  private void onBrowseLooseRoot() {
+    chooseDirectory(looseRootPath, looseRootField, "Select Loose Frame Folder");
   }
 
   @FXML
@@ -132,6 +160,141 @@ public class SpriteSheetController {
     });
 
     startWorker(task, "sprite-sheet-generator");
+  }
+
+  @FXML
+  private void onGenerateLooseSheets() {
+    Path root = looseRootPath.get();
+    if (root == null) {
+      appendLog(looseLogArea, "Select a frame folder first.");
+      return;
+    }
+
+    int cellWidth;
+    int cellHeight;
+    try {
+      cellWidth = parsePositiveInt(looseCellWidthField, "Frame width");
+      cellHeight = parsePositiveInt(looseCellHeightField, "Frame height");
+    } catch (IllegalArgumentException error) {
+      appendLog(looseLogArea, "Failed: " + error.getMessage());
+      showError("Grouped sprite sheet generation failed", error.getMessage());
+      return;
+    }
+
+    Task<LooseFrameSpriteSheetBatchResult> task = new Task<>() {
+      @Override
+      protected LooseFrameSpriteSheetBatchResult call() throws Exception {
+        return looseFrameSpriteSheetService.generate(root, cellWidth, cellHeight);
+      }
+    };
+
+    looseBusy.set(true);
+    appendLog(
+        looseLogArea,
+        "Generating prefix-grouped sprite sheets from " + root
+            + " (cell: " + cellWidth + "x" + cellHeight + ")"
+            + " (Godot limit: "
+            + LooseFrameSpriteSheetService.GODOT_MAX_TEXTURE_SIZE + "x"
+            + LooseFrameSpriteSheetService.GODOT_MAX_TEXTURE_SIZE + ")..."
+    );
+
+    task.setOnSucceeded(event -> {
+      looseBusy.set(false);
+      LooseFrameSpriteSheetBatchResult batch = task.getValue();
+      List<LooseFrameSpriteSheetResult> results = batch.sheets();
+      long prefixCount = results.stream().map(LooseFrameSpriteSheetResult::prefix).distinct().count();
+      appendLog(
+          looseLogArea,
+          "Done. Generated " + results.size() + " sprite sheet(s) across " + prefixCount + " prefix group(s)."
+      );
+      for (LooseFrameSpriteSheetResult result : results) {
+        appendLog(
+            looseLogArea,
+            "Saved " + result.outputName()
+                + " (prefix: " + result.prefix()
+                + ", sheet: " + result.sheetIndex() + "/" + result.totalSheets()
+                + ", cell: " + result.cellWidth() + "x" + result.cellHeight()
+                + ", grid: " + result.columns() + "x" + result.rows()
+                + ", frames: " + result.frameCount()
+                + ") -> " + result.outputPath()
+                + " (map: " + result.mappingPath() + ")"
+        );
+        appendLog(
+            looseLogArea,
+            "Atlas size: " + result.imageWidth() + "x" + result.imageHeight()
+                + " (Godot limit: "
+                + LooseFrameSpriteSheetService.GODOT_MAX_TEXTURE_SIZE + "x"
+                + LooseFrameSpriteSheetService.GODOT_MAX_TEXTURE_SIZE + ")."
+        );
+        if (result.totalSheets() > 1 && result.sheetIndex() == 1) {
+          appendLog(
+              looseLogArea,
+              "Prefix " + result.prefix() + " was split into " + result.totalSheets()
+                  + " sheets to stay within Godot's texture-size limit."
+          );
+        }
+      }
+      if (!batch.excludedFrames().isEmpty()) {
+        Map<String, Integer> detectedSizes = batch.detectedFrameSizes();
+        String selectedSize = cellWidth + "x" + cellHeight;
+        appendLog(
+            looseLogArea,
+            "Detected image sizes: " + formatSizeSummary(detectedSizes)
+        );
+        String swappedSize = cellHeight + "x" + cellWidth;
+        int selectedCount = detectedSizes.getOrDefault(selectedSize, 0);
+        int swappedCount = detectedSizes.getOrDefault(swappedSize, 0);
+        if (!selectedSize.equals(swappedSize) && swappedCount > selectedCount) {
+          appendLog(
+              looseLogArea,
+              "Hint: more files match " + swappedSize + " than " + selectedSize
+                  + ". Check whether width and height are swapped."
+          );
+        }
+        appendLog(
+            looseLogArea,
+            "Warning: skipped " + batch.excludedFrames().size()
+                + " image(s) because they do not match the selected frame size."
+        );
+        StringBuilder message = new StringBuilder(
+            "These images were not included because their sizes do not match "
+                + cellWidth + "x" + cellHeight + ":"
+        );
+        message.append(System.lineSeparator())
+            .append(System.lineSeparator())
+            .append("Detected image sizes: ")
+            .append(formatSizeSummary(detectedSizes));
+        int previewLimit = 20;
+        List<Path> excludedFrames = batch.excludedFrames();
+        int previewCount = Math.min(previewLimit, excludedFrames.size());
+        if (previewCount > 0) {
+          message.append(System.lineSeparator())
+              .append(System.lineSeparator())
+              .append("Examples:");
+        }
+        for (int index = 0; index < previewCount; index++) {
+          message.append(System.lineSeparator()).append(root.relativize(excludedFrames.get(index)));
+        }
+        int remaining = excludedFrames.size() - previewCount;
+        if (remaining > 0) {
+          message.append(System.lineSeparator())
+              .append("... and ")
+              .append(remaining)
+              .append(" more.");
+        }
+        showWarning("Grouped sprite sheet warning", message.toString());
+      }
+    });
+
+    task.setOnFailed(event -> {
+      looseBusy.set(false);
+      Throwable error = task.getException();
+      String message = error == null ? "Unknown error." : error.getMessage();
+      appendLog(looseLogArea, "Failed: " + message);
+      showError("Grouped sprite sheet generation failed", message);
+    });
+
+    startWorker(task, "loose-frame-sprite-sheet-generator");
   }
 
   @FXML
@@ -274,6 +437,17 @@ public class SpriteSheetController {
 
   private void showWarning(String title, String message) {
     showAlert(Alert.AlertType.WARNING, title, message);
+  }
+
+  private String formatSizeSummary(Map<String, Integer> detectedSizes) {
+    return detectedSizes.entrySet().stream()
+        .sorted(
+            Comparator.<Map.Entry<String, Integer>>comparingInt(Map.Entry::getValue)
+                .reversed()
+                .thenComparing(Map.Entry::getKey)
+        )
+        .map(entry -> entry.getKey() + " (" + entry.getValue() + ")")
+        .collect(Collectors.joining(", "));
   }
 
   private void showAlert(Alert.AlertType type, String title, String message) {

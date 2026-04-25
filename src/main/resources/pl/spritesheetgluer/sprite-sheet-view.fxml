@@ -45,6 +45,37 @@
           <TextArea fx:id="logArea" prefRowCount="12" wrapText="true" editable="false"/>
         </VBox>
       </Tab>
+      <Tab text="Loose Files by Prefix">
+        <VBox spacing="14.0" alignment="TOP_LEFT">
+          <padding>
+            <Insets bottom="14.0" left="14.0" right="14.0" top="14.0"/>
+          </padding>
+
+          <VBox spacing="10.0">
+            <HBox spacing="8.0" alignment="CENTER_LEFT">
+              <Label text="Frame folder:"/>
+              <TextField fx:id="looseRootField" editable="false" HBox.hgrow="ALWAYS"/>
+              <Button text="Browse..." onAction="#onBrowseLooseRoot"/>
+            </HBox>
+            <HBox spacing="8.0" alignment="CENTER_LEFT">
+              <Label text="Frame size:"/>
+              <TextField fx:id="looseCellWidthField" prefWidth="72.0" text="128"/>
+              <Label text="x"/>
+              <TextField fx:id="looseCellHeightField" prefWidth="72.0" text="256"/>
+            </HBox>
+            <Label wrapText="true"
+                   text="Loose images are grouped by the file-name prefix before the first separator or digits. Example: Stone 01.png, Stone_02.png, StoneB03.png -> Stone-sheet.png"/>
+            <Label wrapText="true"
+                   text="Only images matching the selected frame size are included. Large groups are split automatically to stay within Godot's 16384x16384 texture limit."/>
+            <HBox spacing="8.0" alignment="CENTER_LEFT">
+              <Button fx:id="looseGenerateButton" text="Generate grouped sheets" onAction="#onGenerateLooseSheets"/>
+            </HBox>
+          </VBox>
+
+          <Label text="Log"/>
+          <TextArea fx:id="looseLogArea" prefRowCount="12" wrapText="true" editable="false"/>
+        </VBox>
+      </Tab>
       <Tab text="Merge Existing Sheets">
         <VBox spacing="14.0" alignment="TOP_LEFT">
           <padding>

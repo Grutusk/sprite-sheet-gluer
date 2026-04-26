@@ -7,7 +7,6 @@ public record LooseFrameSpriteSheetResult(
     String prefix,
     String outputName,
     Path outputPath,
-    Path mappingPath,
     int columns,
     int rows,
     int frameCount,
@@ -20,7 +19,6 @@ public record LooseFrameSpriteSheetResult(
     Objects.requireNonNull(prefix, "prefix");
     Objects.requireNonNull(outputName, "outputName");
     Objects.requireNonNull(outputPath, "outputPath");
-    Objects.requireNonNull(mappingPath, "mappingPath");
     if (columns <= 0) {
       throw new IllegalArgumentException("columns must be positive: " + columns);
     }

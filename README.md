@@ -18,9 +18,13 @@ Small JavaFX tool with three workflows:
   are treated as a single animation and glued into one sprite sheet.
 - For the loose-file prefix tab, select a folder that contains image files directly.
   Enter the frame size first; the UI defaults to `128x256`.
-  Files are grouped by the prefix before the first space, `_`, `-`, or digit.
+  You can optionally provide a comma-separated prefix list such as
+  `Stone,Ground,Misc`. When this field is filled, only files matching one of
+  those prefixes are grouped.
+  If the prefix list is empty, files are grouped by the first word before a
+  space.
   Examples:
-  - `Stone 01.png`, `Stone_02.png`, `StoneB03.png` -> `Stone-sheet.png`
+  - `Stone 01.png`, `Stone 02.png`, `Stone 03.png` -> `Stone-sheet.png`
   - `Ground A01.png`, `Ground B02.png` -> `Ground-sheet.png`
 
 ## Output files
@@ -33,7 +37,6 @@ For each character:
 For loose-file prefix groups:
 
 - `<prefix>-sheet.png` sprite sheet.
-- `<prefix>-sheet.frames.txt` mapping of source file name to frame index.
 - If a prefix group would exceed Godot's `16384x16384` texture limit, the tool
   splits it into numbered files such as `<prefix>-sheet-01.png`.
 
@@ -56,6 +59,8 @@ For the existing-sheet merge tab:
 - For loose-file prefix groups, only frames matching the selected size are
   included. Matching frames stay in file name order and are packed into the
   most compact grid that fits within the Godot size limit.
+- When a manual prefix list is provided, files that do not match any configured
+  prefix are skipped and reported separately.
 
 ## Mapping file format
 
@@ -95,13 +100,3 @@ Idle2=right,down_se,down,left,down_sw,up_nw,up,up_ne
 
 Use the source file name without `.png` on the left. `default` or `*` sets the
 fallback order for files without an explicit override.
-
-For loose-file prefix groups, each mapping line is the original file name without
-extension followed by its zero-based frame index:
-
-```txt
-grid: 2x2
-Stone A01 -> 0
-Stone B02 -> 1
-Stone C03 -> 2
-```

@@ -54,6 +54,8 @@ public class SpriteSheetController {
   @FXML
   private TextField looseCellHeightField;
   @FXML
+  private TextField loosePrefixesField;
+  @FXML
   private TextField mergeRootField;
   @FXML
   private TextArea mergeLogArea;
@@ -180,11 +182,12 @@ public class SpriteSheetController {
       showError("Grouped sprite sheet generation failed", error.getMessage());
       return;
     }
+    List<String> configuredPrefixes = parseCommaSeparatedValues(loosePrefixesField.getText());
 
     Task<LooseFrameSpriteSheetBatchResult> task = new Task<>() {
       @Override
       protected LooseFrameSpriteSheetBatchResult call() throws Exception {
-        return looseFrameSpriteSheetService.generate(root, cellWidth, cellHeight);
+        return looseFrameSpriteSheetService.generate(root, cellWidth, cellHeight, configuredPrefixes);
       }
     };
 
@@ -197,6 +200,9 @@ public class SpriteSheetController {
             + LooseFrameSpriteSheetService.GODOT_MAX_TEXTURE_SIZE + "x"
             + LooseFrameSpriteSheetService.GODOT_MAX_TEXTURE_SIZE + ")..."
     );
+    if (!configuredPrefixes.isEmpty()) {
+      appendLog(looseLogArea, "Using configured prefixes: " + String.join(", ", configuredPrefixes));
+    }
 
     task.setOnSucceeded(event -> {
       looseBusy.set(false);
@@ -217,7 +223,6 @@ public class SpriteSheetController {
                 + ", grid: " + result.columns() + "x" + result.rows()
                 + ", frames: " + result.frameCount()
                 + ") -> " + result.outputPath()
-                + " (map: " + result.mappingPath() + ")"
         );
         appendLog(
             looseLogArea,
@@ -233,6 +238,25 @@ public class SpriteSheetController {
                   + " sheets to stay within Godot's texture-size limit."
           );
         }
+      }
+      if (!batch.unmatchedPrefixFrames().isEmpty()) {
+        appendLog(
+            looseLogArea,
+            "Warning: skipped " + batch.unmatchedPrefixFrames().size()
+                + " image(s) because they do not match any configured prefix."
+        );
+        showWarning(
+            "Grouped sprite sheet warning",
+            buildPreviewMessage(
+                "These images were not included because they do not match any configured prefix:"
+                    + System.lineSeparator()
+                    + System.lineSeparator()
+                    + "Configured prefixes: " + String.join(", ", configuredPrefixes),
+                root,
+                batch.unmatchedPrefixFrames(),
+                20
+            )
+        );
       }
       if (!batch.excludedFrames().isEmpty()) {
         Map<String, Integer> detectedSizes = batch.detectedFrameSizes();
@@ -264,25 +288,10 @@ public class SpriteSheetController {
             .append(System.lineSeparator())
             .append("Detected image sizes: ")
             .append(formatSizeSummary(detectedSizes));
-        int previewLimit = 20;
-        List<Path> excludedFrames = batch.excludedFrames();
-        int previewCount = Math.min(previewLimit, excludedFrames.size());
-        if (previewCount > 0) {
-          message.append(System.lineSeparator())
-              .append(System.lineSeparator())
-              .append("Examples:");
-        }
-        for (int index = 0; index < previewCount; index++) {
-          message.append(System.lineSeparator()).append(root.relativize(excludedFrames.get(index)));
-        }
-        int remaining = excludedFrames.size() - previewCount;
-        if (remaining > 0) {
-          message.append(System.lineSeparator())
-              .append("... and ")
-              .append(remaining)
-              .append(" more.");
-        }
-        showWarning("Grouped sprite sheet warning", message.toString());
+        showWarning(
+            "Grouped sprite sheet warning",
+            buildPreviewMessage(message.toString(), root, batch.excludedFrames(), 20)
+        );
       }
     });
 
@@ -439,6 +448,20 @@ public class SpriteSheetController {
     showAlert(Alert.AlertType.WARNING, title, message);
   }
 
+  private List<String> parseCommaSeparatedValues(String text) {
+    if (text == null || text.isBlank()) {
+      return List.of();
+    }
+    List<String> values = new ArrayList<>();
+    for (String part : text.split(",")) {
+      String trimmed = part.trim();
+      if (!trimmed.isEmpty()) {
+        values.add(trimmed);
+      }
+    }
+    return List.copyOf(values);
+  }
+
   private String formatSizeSummary(Map<String, Integer> detectedSizes) {
     return detectedSizes.entrySet().stream()
         .sorted(
@@ -448,6 +471,27 @@ public class SpriteSheetController {
         )
         .map(entry -> entry.getKey() + " (" + entry.getValue() + ")")
         .collect(Collectors.joining(", "));
+  }
+
+  private String buildPreviewMessage(String intro, Path root, List<Path> files, int previewLimit) {
+    StringBuilder message = new StringBuilder(intro);
+    int previewCount = Math.min(previewLimit, files.size());
+    if (previewCount > 0) {
+      message.append(System.lineSeparator())
+          .append(System.lineSeparator())
+          .append("Examples:");
+    }
+    for (int index = 0; index < previewCount; index++) {
+      message.append(System.lineSeparator()).append(root.relativize(files.get(index)));
+    }
+    int remaining = files.size() - previewCount;
+    if (remaining > 0) {
+      message.append(System.lineSeparator())
+          .append("... and ")
+          .append(remaining)
+          .append(" more.");
+    }
+    return message.toString();
   }
 
   private void showAlert(Alert.AlertType type, String title, String message) {

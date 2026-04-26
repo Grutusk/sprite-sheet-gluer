@@ -26,27 +26,23 @@ public class LooseFrameSpriteSheetService {
   private static final String OUTPUT_SUFFIX = "-sheet";
 
   private final SpriteSheetWriter writer;
-  private final SpriteSheetMetadataWriter metadataWriter;
   private final int maxTextureSize;
 
   public LooseFrameSpriteSheetService() {
-    this(new SpriteSheetWriter(), new SpriteSheetMetadataWriter(), GODOT_MAX_TEXTURE_SIZE);
+    this(new SpriteSheetWriter(), GODOT_MAX_TEXTURE_SIZE);
   }
 
   public LooseFrameSpriteSheetService(
-      SpriteSheetWriter writer,
-      SpriteSheetMetadataWriter metadataWriter
+      SpriteSheetWriter writer
   ) {
-    this(writer, metadataWriter, GODOT_MAX_TEXTURE_SIZE);
+    this(writer, GODOT_MAX_TEXTURE_SIZE);
   }
 
   public LooseFrameSpriteSheetService(
       SpriteSheetWriter writer,
-      SpriteSheetMetadataWriter metadataWriter,
       int maxTextureSize
   ) {
     this.writer = Objects.requireNonNull(writer, "writer");
-    this.metadataWriter = Objects.requireNonNull(metadataWriter, "metadataWriter");
     if (maxTextureSize <= 0) {
       throw new IllegalArgumentException("maxTextureSize must be positive: " + maxTextureSize);
     }
@@ -54,15 +50,28 @@ public class LooseFrameSpriteSheetService {
   }
 
   public LooseFrameSpriteSheetBatchResult generate(Path root) throws IOException {
-    return generate(root, null);
+    return generate(root, null, List.of());
   }
 
   public LooseFrameSpriteSheetBatchResult generate(Path root, int cellWidth, int cellHeight) throws IOException {
-    validateCellSize(cellWidth, cellHeight);
-    return generate(root, new SizeKey(cellWidth, cellHeight));
+    return generate(root, cellWidth, cellHeight, List.of());
   }
 
-  private LooseFrameSpriteSheetBatchResult generate(Path root, SizeKey expectedSize) throws IOException {
+  public LooseFrameSpriteSheetBatchResult generate(
+      Path root,
+      int cellWidth,
+      int cellHeight,
+      List<String> configuredPrefixes
+  ) throws IOException {
+    validateCellSize(cellWidth, cellHeight);
+    return generate(root, new SizeKey(cellWidth, cellHeight), configuredPrefixes);
+  }
+
+  private LooseFrameSpriteSheetBatchResult generate(
+      Path root,
+      SizeKey expectedSize,
+      List<String> configuredPrefixes
+  ) throws IOException {
     Objects.requireNonNull(root, "root");
     if (!Files.isDirectory(root)) {
       throw new IllegalArgumentException("Root path must be a directory: " + root);
@@ -76,9 +85,12 @@ public class LooseFrameSpriteSheetService {
       throw new IllegalStateException("No loose frame images found under: " + root);
     }
 
-    Map<String, PrefixGroup> groups = groupFramesByPrefix(sourceFrames);
+    List<String> prefixes = normalizeConfiguredPrefixes(configuredPrefixes);
+    GroupingSelection groupingSelection = groupFramesByPrefix(sourceFrames, prefixes);
+    Map<String, PrefixGroup> groups = groupingSelection.groups();
     List<LooseFrameSpriteSheetResult> results = new ArrayList<>();
     List<Path> excludedFrames = new ArrayList<>();
+    List<Path> unmatchedPrefixFrames = groupingSelection.unmatchedFrames();
     Map<String, Integer> detectedFrameSizes = new LinkedHashMap<>();
     for (PrefixGroup group : groups.values()) {
       GroupProcessingResult groupResult = processGroup(root, group, expectedSize);
@@ -87,17 +99,31 @@ public class LooseFrameSpriteSheetService {
       mergeCounts(detectedFrameSizes, groupResult.detectedFrameSizes());
     }
 
+    if (!prefixes.isEmpty() && groups.isEmpty()) {
+      throw new IllegalStateException(
+          "No files matched the configured prefixes under: " + root
+              + " (" + String.join(", ", prefixes) + ")"
+      );
+    }
+
     if (results.isEmpty()) {
       if (expectedSize != null) {
-        throw new IllegalStateException(
-            "No frames matching " + expectedSize.width() + "x" + expectedSize.height()
-                + " found under: " + root
-        );
+        String message = "No frames matching " + expectedSize.width() + "x" + expectedSize.height()
+            + " found under: " + root;
+        if (!prefixes.isEmpty()) {
+          message += " for configured prefixes: " + String.join(", ", prefixes);
+        }
+        throw new IllegalStateException(message);
       }
       throw new IllegalStateException("No sprite sheets could be generated under: " + root);
     }
 
-    return new LooseFrameSpriteSheetBatchResult(results, excludedFrames, detectedFrameSizes);
+    return new LooseFrameSpriteSheetBatchResult(
+        results,
+        excludedFrames,
+        unmatchedPrefixFrames,
+        detectedFrameSizes
+    );
   }
 
   private GroupProcessingResult processGroup(Path root, PrefixGroup group, SizeKey expectedSize) throws IOException {
@@ -193,15 +219,12 @@ public class LooseFrameSpriteSheetService {
 
     String outputName = buildOutputName(prefix, sheetIndex, totalSheets);
     Path outputPath = root.resolve(outputName + ".png");
-    Path mappingPath = root.resolve(outputName + ".frames.txt");
     writer.write(spriteSheet, outputPath);
-    metadataWriter.write(mappingPath, buildMappingLines(frames, layout.rows(), layout.columns()));
 
     return new LooseFrameSpriteSheetResult(
         prefix,
         outputName,
         outputPath,
-        mappingPath,
         layout.columns(),
         layout.rows(),
         frames.size(),
@@ -212,7 +235,11 @@ public class LooseFrameSpriteSheetService {
     );
   }
 
-  private Map<String, PrefixGroup> groupFramesByPrefix(List<Path> sourceFrames) {
+  private GroupingSelection groupFramesByPrefix(List<Path> sourceFrames, List<String> configuredPrefixes) {
+    if (!configuredPrefixes.isEmpty()) {
+      return groupFramesByConfiguredPrefixes(sourceFrames, configuredPrefixes);
+    }
+
     Map<String, PrefixGroupBuilder> grouped = new LinkedHashMap<>();
     for (Path sourceFrame : sourceFrames) {
       String fileName = sourceFrame.getFileName().toString();
@@ -230,7 +257,90 @@ public class LooseFrameSpriteSheetService {
       PrefixGroupBuilder builder = entry.getValue();
       groups.put(entry.getKey(), new PrefixGroup(builder.prefix(), List.copyOf(builder.frames())));
     }
-    return groups;
+    return new GroupingSelection(groups, List.of());
+  }
+
+  private GroupingSelection groupFramesByConfiguredPrefixes(List<Path> sourceFrames, List<String> configuredPrefixes) {
+    Map<String, PrefixGroupBuilder> grouped = new LinkedHashMap<>();
+    List<Path> unmatchedFrames = new ArrayList<>();
+    List<ConfiguredPrefix> prefixes = configuredPrefixes.stream()
+        .map(ConfiguredPrefix::new)
+        .sorted(Comparator.comparingInt((ConfiguredPrefix prefix) -> prefix.value().length()).reversed())
+        .toList();
+
+    for (Path sourceFrame : sourceFrames) {
+      String baseName = stripExtension(sourceFrame.getFileName().toString()).trim();
+      ConfiguredPrefix matchedPrefix = findConfiguredPrefix(baseName, prefixes);
+      if (matchedPrefix == null) {
+        unmatchedFrames.add(sourceFrame);
+        continue;
+      }
+
+      String prefix = matchedPrefix.value();
+      String key = prefix.toLowerCase(Locale.ROOT);
+      PrefixGroupBuilder builder = grouped.computeIfAbsent(
+          key,
+          unused -> new PrefixGroupBuilder(prefix, new ArrayList<>())
+      );
+      builder.frames().add(sourceFrame);
+    }
+
+    Map<String, PrefixGroup> groups = new LinkedHashMap<>();
+    for (Map.Entry<String, PrefixGroupBuilder> entry : grouped.entrySet()) {
+      PrefixGroupBuilder builder = entry.getValue();
+      groups.put(entry.getKey(), new PrefixGroup(builder.prefix(), List.copyOf(builder.frames())));
+    }
+    return new GroupingSelection(groups, List.copyOf(unmatchedFrames));
+  }
+
+  private ConfiguredPrefix findConfiguredPrefix(String baseName, List<ConfiguredPrefix> prefixes) {
+    for (ConfiguredPrefix prefix : prefixes) {
+      if (matchesConfiguredPrefix(baseName, prefix.value())) {
+        return prefix;
+      }
+    }
+    return null;
+  }
+
+  private boolean matchesConfiguredPrefix(String baseName, String configuredPrefix) {
+    if (baseName.length() < configuredPrefix.length()) {
+      return false;
+    }
+    if (!baseName.regionMatches(true, 0, configuredPrefix, 0, configuredPrefix.length())) {
+      return false;
+    }
+    if (baseName.length() == configuredPrefix.length()) {
+      return true;
+    }
+
+    char nextCharacter = baseName.charAt(configuredPrefix.length());
+    if (Character.isWhitespace(nextCharacter) || nextCharacter == '_' || nextCharacter == '-') {
+      return true;
+    }
+    if (Character.isDigit(nextCharacter)) {
+      return true;
+    }
+    char lastPrefixCharacter = configuredPrefix.charAt(configuredPrefix.length() - 1);
+    return Character.isUpperCase(nextCharacter) && Character.isLowerCase(lastPrefixCharacter);
+  }
+
+  private List<String> normalizeConfiguredPrefixes(List<String> configuredPrefixes) {
+    if (configuredPrefixes == null || configuredPrefixes.isEmpty()) {
+      return List.of();
+    }
+
+    Map<String, String> normalized = new LinkedHashMap<>();
+    for (String configuredPrefix : configuredPrefixes) {
+      if (configuredPrefix == null) {
+        continue;
+      }
+      String trimmed = configuredPrefix.trim();
+      if (trimmed.isEmpty()) {
+        continue;
+      }
+      normalized.putIfAbsent(trimmed.toLowerCase(Locale.ROOT), trimmed);
+    }
+    return List.copyOf(normalized.values());
   }
 
   private String inferPrefix(String fileName) {
@@ -239,45 +349,10 @@ public class LooseFrameSpriteSheetService {
       return "sheet";
     }
 
-    int separatorIndex = firstSeparatorIndex(baseName);
-    String prefixCandidate;
-    if (separatorIndex >= 0) {
-      prefixCandidate = baseName.substring(0, separatorIndex);
-    } else {
-      int digitIndex = firstDigitIndex(baseName);
-      if (digitIndex >= 0) {
-        prefixCandidate = baseName.substring(0, digitIndex);
-        if (prefixCandidate.length() > 1
-            && Character.isUpperCase(prefixCandidate.charAt(prefixCandidate.length() - 1))
-            && Character.isLowerCase(prefixCandidate.charAt(prefixCandidate.length() - 2))) {
-          prefixCandidate = prefixCandidate.substring(0, prefixCandidate.length() - 1);
-        }
-      } else {
-        prefixCandidate = baseName;
-      }
-    }
-
+    int separatorIndex = baseName.indexOf(' ');
+    String prefixCandidate = separatorIndex >= 0 ? baseName.substring(0, separatorIndex) : baseName;
     String cleaned = trimGroupingCharacters(prefixCandidate);
     return cleaned.isBlank() ? baseName : cleaned;
-  }
-
-  private int firstSeparatorIndex(String baseName) {
-    for (int index = 0; index < baseName.length(); index++) {
-      char character = baseName.charAt(index);
-      if (Character.isWhitespace(character) || character == '_' || character == '-') {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  private int firstDigitIndex(String baseName) {
-    for (int index = 0; index < baseName.length(); index++) {
-      if (Character.isDigit(baseName.charAt(index))) {
-        return index;
-      }
-    }
-    return -1;
   }
 
   private String trimGroupingCharacters(String value) {
@@ -294,16 +369,6 @@ public class LooseFrameSpriteSheetService {
 
   private boolean isGroupingTrimCharacter(char character) {
     return Character.isWhitespace(character) || character == '_' || character == '-';
-  }
-
-  private List<String> buildMappingLines(List<FrameCandidate> frames, int rows, int columns) {
-    List<String> lines = new ArrayList<>();
-    lines.add("grid: " + rows + "x" + columns);
-    for (int index = 0; index < frames.size(); index++) {
-      String name = stripExtension(frames.get(index).path().getFileName().toString());
-      lines.add(name + " -> " + index);
-    }
-    return lines;
   }
 
   private Layout findBestLayout(int frameCount, int cellWidth, int cellHeight) {
@@ -453,11 +518,17 @@ public class LooseFrameSpriteSheetService {
   private record PrefixGroupBuilder(String prefix, List<Path> frames) {
   }
 
+  private record ConfiguredPrefix(String value) {
+  }
+
   private record GroupProcessingResult(
       List<LooseFrameSpriteSheetResult> results,
       List<Path> excludedFrames,
       Map<String, Integer> detectedFrameSizes
   ) {
+  }
+
+  private record GroupingSelection(Map<String, PrefixGroup> groups, List<Path> unmatchedFrames) {
   }
 
   private record Layout(int columns, int rows) {

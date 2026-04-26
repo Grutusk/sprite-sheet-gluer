@@ -5,7 +5,6 @@ import org.junit.jupiter.api.io.TempDir;
 import pl.spritesheetgluer.sprite.LooseFrameSpriteSheetBatchResult;
 import pl.spritesheetgluer.sprite.LooseFrameSpriteSheetResult;
 import pl.spritesheetgluer.sprite.LooseFrameSpriteSheetService;
-import pl.spritesheetgluer.sprite.SpriteSheetMetadataWriter;
 import pl.spritesheetgluer.sprite.SpriteSheetWriter;
 
 import javax.imageio.ImageIO;
@@ -19,7 +18,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertIterableEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LooseFrameSpriteSheetServiceTest {
@@ -30,8 +29,8 @@ class LooseFrameSpriteSheetServiceTest {
   void groupsLooseFramesByPrefixAndIgnoresPreviousSheetOutputs() throws Exception {
     Path root = Files.createDirectory(tempDir.resolve("loose"));
     writePng(root.resolve("Stone 01.png"), 4, 4, Color.RED);
-    writePng(root.resolve("StoneB03.png"), 4, 4, Color.GREEN);
-    writePng(root.resolve("Stone_02.png"), 4, 4, Color.BLUE);
+    writePng(root.resolve("Stone 03.png"), 4, 4, Color.GREEN);
+    writePng(root.resolve("Stone 02.png"), 4, 4, Color.BLUE);
     writePng(root.resolve("Ground 01.png"), 4, 4, Color.YELLOW);
     writePng(root.resolve("Stone-sheet.png"), 4, 4, Color.BLACK);
 
@@ -39,6 +38,7 @@ class LooseFrameSpriteSheetServiceTest {
     LooseFrameSpriteSheetBatchResult batch = service.generate(root);
 
     assertTrue(batch.excludedFrames().isEmpty());
+    assertTrue(batch.unmatchedPrefixFrames().isEmpty());
     assertEquals(Map.of("4x4", 4), batch.detectedFrameSizes());
     assertEquals(2, batch.sheets().size());
 
@@ -62,14 +62,7 @@ class LooseFrameSpriteSheetServiceTest {
     assertCellColor(stoneSheet, 0, 0, 4, 4, Color.RED);
     assertCellColor(stoneSheet, 1, 0, 4, 4, Color.BLUE);
     assertCellColor(stoneSheet, 0, 1, 4, 4, Color.GREEN);
-
-    List<String> mapping = Files.readAllLines(stone.mappingPath());
-    assertIterableEquals(List.of(
-        "grid: 2x2",
-        "Stone 01 -> 0",
-        "Stone_02 -> 1",
-        "StoneB03 -> 2"
-    ), mapping);
+    assertFalse(Files.exists(root.resolve("Stone-sheet.frames.txt")));
   }
 
   @Test
@@ -83,12 +76,12 @@ class LooseFrameSpriteSheetServiceTest {
 
     LooseFrameSpriteSheetService service = new LooseFrameSpriteSheetService(
         new SpriteSheetWriter(),
-        new SpriteSheetMetadataWriter(),
         8
     );
     LooseFrameSpriteSheetBatchResult batch = service.generate(root);
 
     assertTrue(batch.excludedFrames().isEmpty());
+    assertTrue(batch.unmatchedPrefixFrames().isEmpty());
     assertEquals(2, batch.sheets().size());
 
     LooseFrameSpriteSheetResult first = batch.sheets().get(0);
@@ -106,21 +99,8 @@ class LooseFrameSpriteSheetServiceTest {
     assertEquals(1, second.columns());
     assertEquals(1, second.rows());
     assertEquals(1, second.frameCount());
-
-    List<String> firstMapping = Files.readAllLines(first.mappingPath());
-    assertIterableEquals(List.of(
-        "grid: 2x2",
-        "Stone 01 -> 0",
-        "Stone 02 -> 1",
-        "Stone 03 -> 2",
-        "Stone 04 -> 3"
-    ), firstMapping);
-
-    List<String> secondMapping = Files.readAllLines(second.mappingPath());
-    assertIterableEquals(List.of(
-        "grid: 1x1",
-        "Stone 05 -> 0"
-    ), secondMapping);
+    assertFalse(Files.exists(root.resolve("Stone-sheet-01.frames.txt")));
+    assertFalse(Files.exists(root.resolve("Stone-sheet-02.frames.txt")));
   }
 
   @Test
@@ -136,6 +116,7 @@ class LooseFrameSpriteSheetServiceTest {
     LooseFrameSpriteSheetBatchResult batch = service.generate(root);
 
     assertEquals(List.of(excluded), batch.excludedFrames());
+    assertTrue(batch.unmatchedPrefixFrames().isEmpty());
     assertEquals(2, batch.sheets().size());
     assertEquals(1, batch.sheets().get(0).frameCount());
     assertEquals(1, batch.sheets().get(1).frameCount());
@@ -155,17 +136,43 @@ class LooseFrameSpriteSheetServiceTest {
     LooseFrameSpriteSheetBatchResult batch = service.generate(root, 4, 4);
 
     assertEquals(List.of(excludedB, excludedA), batch.excludedFrames());
+    assertTrue(batch.unmatchedPrefixFrames().isEmpty());
     assertEquals(Map.of("4x4", 1, "8x8", 2), batch.detectedFrameSizes());
     assertEquals(1, batch.sheets().size());
     LooseFrameSpriteSheetResult result = batch.sheets().get(0);
     assertEquals("Stone", result.prefix());
     assertEquals(1, result.frameCount());
+    assertFalse(Files.exists(root.resolve("Stone-sheet.frames.txt")));
+  }
 
-    List<String> mapping = Files.readAllLines(result.mappingPath());
-    assertIterableEquals(List.of(
-        "grid: 1x1",
-        "Stone 01 -> 0"
-    ), mapping);
+  @Test
+  void usesConfiguredPrefixesWhenProvided() throws Exception {
+    Path root = Files.createDirectory(tempDir.resolve("configured-prefixes"));
+    writePng(root.resolve("Ground 01.png"), 4, 4, Color.RED);
+    writePng(root.resolve("GroundTile01.png"), 4, 4, Color.GREEN);
+    Path unmatched = root.resolve("Misc 01.png");
+    writePng(unmatched, 4, 4, Color.BLUE);
+
+    LooseFrameSpriteSheetService service = new LooseFrameSpriteSheetService();
+    LooseFrameSpriteSheetBatchResult batch = service.generate(
+        root,
+        4,
+        4,
+        List.of("Ground", "GroundTile")
+    );
+
+    assertTrue(batch.excludedFrames().isEmpty());
+    assertEquals(List.of(unmatched), batch.unmatchedPrefixFrames());
+    assertEquals(Map.of("4x4", 2), batch.detectedFrameSizes());
+    assertEquals(2, batch.sheets().size());
+
+    LooseFrameSpriteSheetResult ground = batch.sheets().get(0);
+    assertEquals("Ground", ground.prefix());
+    assertFalse(Files.exists(root.resolve("Ground-sheet.frames.txt")));
+
+    LooseFrameSpriteSheetResult groundTile = batch.sheets().get(1);
+    assertEquals("GroundTile", groundTile.prefix());
+    assertFalse(Files.exists(root.resolve("GroundTile-sheet.frames.txt")));
   }
 
   private static void writePng(Path path, int width, int height, Color color) throws IOException {
